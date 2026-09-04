@@ -31,6 +31,9 @@ fn main() {
     src = src.replace(import_old, "use blake3::Hasher as Blake3Hasher;");
 
     src = src.replace("Sha256::new()", "Blake3Hasher::new()");
+    // sha2::Digest::update accepts owned fixed arrays via AsRef; blake3::Hasher::update requires &[u8].
+    src = src.replace("hasher.update(canonical_record96(", "hasher.update(&canonical_record96(");
+    src = src.replace("h.update(canonical_record96(", "h.update(&canonical_record96(");
 
     let p1 = "let digest: [u8; 32] = hasher.finalize().into();";
     assert!(src.contains(p1), "PERF-022 missing precomputed batch digest pattern");
