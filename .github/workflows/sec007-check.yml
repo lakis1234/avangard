@@ -1,0 +1,27 @@
+name: CALIBRE SECURITY SEC-007 Check
+
+on:
+  push:
+    paths:
+      - 'sec007/**'
+      - '.github/workflows/sec007-check.yml'
+  pull_request:
+    paths:
+      - 'sec007/**'
+      - '.github/workflows/sec007-check.yml'
+  workflow_dispatch:
+
+jobs:
+  windows-run:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: sec007
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version; cargo --version
+      - name: Test SEC-007 logic
+        run: cargo test --release
+      - name: Run SEC-007 multi-process TCP experiment
+        run: cargo run --release
