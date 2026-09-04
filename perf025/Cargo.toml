@@ -1,0 +1,16 @@
+[package]
+name = "calibre-gen2-perf025"
+version = "2.5.0"
+edition = "2024"
+build = "build.rs"
+
+[dependencies]
+ed25519-dalek = "2.2.0"
+blake3 = "1.8.2"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
