@@ -8,7 +8,7 @@ use std::thread;
 use std::time::Instant;
 
 const VALUE: u64 = 100;
-const HOT_TAG: u64 = 0xC411_BRE5_0000_0001u64;
+const HOT_TAG: u64 = 0xC411_BAE5_0000_0001u64;
 
 #[derive(Clone, Copy)]
 struct Cell {
@@ -312,7 +312,7 @@ fn main() {
 
     println!("=== DECISION ===");
     let best = rows.iter().max_by(|a, b| a.tps.partial_cmp(&b.tps).unwrap()).expect("results");
-    println!("BEST TPS: {:.0} mode={} N={} hot={}%% shards={} workers={}", best.tps, best.mode.name(), best.total, best.hot_pct, best.shards, best.workers);
+    println!("BEST TPS: {:.0} mode={} N={} hot={}% shards={} workers={}", best.tps, best.mode.name(), best.total, best.hot_pct, best.shards, best.workers);
 
     let ref_total = sizes[0];
     if let (Some(o0), Some(o50)) = (
