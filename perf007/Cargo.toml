@@ -1,0 +1,11 @@
+[package]
+name = "calibre-gen2-perf007"
+version = "0.7.0"
+edition = "2024"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
