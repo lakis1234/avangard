@@ -1,0 +1,27 @@
+name: CALIBRE SECURITY SEC-006 Check
+
+on:
+  push:
+    paths:
+      - 'sec006/**'
+      - '.github/workflows/sec006-check.yml'
+  pull_request:
+    paths:
+      - 'sec006/**'
+      - '.github/workflows/sec006-check.yml'
+  workflow_dispatch:
+
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: sec006
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version; cargo --version
+      - name: Test SEC-006 packet/auth logic
+        run: cargo test --release
+      - name: Build SEC-006 Windows live TPM binary
+        run: cargo build --release
