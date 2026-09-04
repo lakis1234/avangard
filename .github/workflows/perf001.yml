@@ -1,0 +1,40 @@
+name: CALIBRE GEN2 PERF-001 Rust
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show runner hardware
+        run: |
+          echo '=== CPU ==='
+          lscpu
+          echo '=== MEMORY ==='
+          free -h
+          echo '=== RUST ==='
+          rustc --version
+          cargo --version
+
+      - name: Test release build
+        run: cargo test --release
+
+      - name: Run full raw throughput benchmark
+        run: cargo run --release -- --full --workers 1,2,4,8,16 | tee perf001-output.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: calibre-gen2-perf001-results
+          path: |
+            perf001-results.csv
+            perf001-output.txt
+          retention-days: 30
