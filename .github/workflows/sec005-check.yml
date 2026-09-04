@@ -1,0 +1,27 @@
+name: CALIBRE SECURITY SEC-005 Check
+
+on:
+  push:
+    paths:
+      - 'sec005/**'
+      - '.github/workflows/sec005-check.yml'
+  pull_request:
+    paths:
+      - 'sec005/**'
+      - '.github/workflows/sec005-check.yml'
+  workflow_dispatch:
+
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: sec005
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version; cargo --version
+      - name: Test SEC-005 parser/bindings
+        run: cargo test --release
+      - name: Build SEC-005 Windows probe
+        run: cargo build --release
