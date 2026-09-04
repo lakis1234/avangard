@@ -1,0 +1,23 @@
+name: CALIBRE GEN2 PERF-020 Check
+
+on:
+  push:
+    paths:
+      - 'perf020/**'
+      - '.github/workflows/perf020-check.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: perf020
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version && cargo --version
+      - name: Test PERF-020
+        run: cargo test --release
+      - name: Smoke PERF-020
+        run: cargo run --release -- --txs 5000 --workers 1,2 --baseline-workers 2 --batches 8,32,128
