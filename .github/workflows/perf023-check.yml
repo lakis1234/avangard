@@ -1,0 +1,30 @@
+name: CALIBRE GEN2 PERF-023 Check
+
+on:
+  push:
+    paths:
+      - 'perf023/**'
+      - 'perf022/**'
+      - 'perf021/**'
+      - 'perf014/**'
+      - '.github/workflows/perf023-check.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: perf023
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version && cargo --version
+      - name: Test PERF-023
+        run: cargo test --release
+      - name: Smoke PERF-023 hash-only
+        run: CALIBRE_PERF023_MODE=hash-only cargo run --release -- --txs 100000 --arities 8 --workers 4 --shards 256 --conflicts 0 --batches 4096 --streams 2 --sizes 128
+      - name: Smoke PERF-023 cert-only
+        run: CALIBRE_PERF023_MODE=cert-only cargo run --release -- --txs 100000 --arities 8 --workers 4 --shards 256 --conflicts 0 --batches 4096 --streams 2 --sizes 128
+      - name: Smoke PERF-023 both
+        run: CALIBRE_PERF023_MODE=both cargo run --release -- --txs 100000 --arities 8 --workers 4 --shards 256 --conflicts 0 --batches 4096 --streams 2 --sizes 128
