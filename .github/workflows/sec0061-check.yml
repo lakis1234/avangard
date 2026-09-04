@@ -1,0 +1,27 @@
+name: CALIBRE SECURITY SEC-006.1 Check
+
+on:
+  push:
+    paths:
+      - 'sec0061/**'
+      - '.github/workflows/sec0061-check.yml'
+  pull_request:
+    paths:
+      - 'sec0061/**'
+      - '.github/workflows/sec0061-check.yml'
+  workflow_dispatch:
+
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: sec0061
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version; cargo --version
+      - name: Test SEC-006.1 auth probe logic
+        run: cargo test --release
+      - name: Build SEC-006.1 Windows probe
+        run: cargo build --release
