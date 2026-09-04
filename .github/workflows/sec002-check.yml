@@ -1,0 +1,27 @@
+name: CALIBRE SECURITY SEC-002 Check
+
+on:
+  push:
+    paths:
+      - 'sec002/**'
+      - '.github/workflows/sec002-check.yml'
+  pull_request:
+    paths:
+      - 'sec002/**'
+      - '.github/workflows/sec002-check.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: sec002
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version && cargo --version
+      - name: Test SEC-002
+        run: cargo test --release
+      - name: Run SEC-002
+        run: cargo run --release
