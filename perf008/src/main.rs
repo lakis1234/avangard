@@ -19,13 +19,8 @@ fn mix64(mut x: u64) -> u64 {
 fn parse_list<T: std::str::FromStr>(args: &[String], flag: &str, default: Vec<T>) -> Vec<T> {
     if let Some(i) = args.iter().position(|x| x == flag) {
         if let Some(v) = args.get(i + 1) {
-            let out: Vec<T> = v
-                .split(',')
-                .filter_map(|x| x.trim().parse::<T>().ok())
-                .collect();
-            if !out.is_empty() {
-                return out;
-            }
+            let out: Vec<T> = v.split(',').filter_map(|x| x.trim().parse::<T>().ok()).collect();
+            if !out.is_empty() { return out; }
         }
     }
     default
@@ -56,7 +51,6 @@ fn run_case(txs: u64, record_size: usize, streams: usize) -> Row {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
     let addr = listener.local_addr().expect("listener address");
 
-    // All sender and receiver workers rendezvous twice so connection setup is not timed.
     let ready = Arc::new(Barrier::new(streams * 2 + 1));
     let go = Arc::new(Barrier::new(streams * 2 + 1));
 
@@ -64,9 +58,18 @@ fn run_case(txs: u64, record_size: usize, streams: usize) -> Row {
     let go_accept = Arc::clone(&go);
     let receiver_manager = thread::spawn(move || {
         let mut receivers = Vec::with_capacity(streams);
-        for s in 0..streams {
-            let (stream, _) = listener.accept().expect("accept loopback stream");
+        let mut seen = vec![false; streams];
+        for _ in 0..streams {
+            let (mut stream, _) = listener.accept().expect("accept loopback stream");
             stream.set_nodelay(true).expect("receiver TCP_NODELAY");
+
+            let mut hello = [0u8; 8];
+            stream.read_exact(&mut hello).expect("read stream id handshake");
+            let s = u64::from_le_bytes(hello) as usize;
+            assert!(s < streams, "invalid stream id handshake");
+            assert!(!seen[s], "duplicate stream id handshake");
+            seen[s] = true;
+
             let ready = Arc::clone(&ready_accept);
             let go = Arc::clone(&go_accept);
             let expected = stream_count(txs, streams, s);
@@ -90,6 +93,7 @@ fn run_case(txs: u64, record_size: usize, streams: usize) -> Row {
             }));
         }
 
+        assert!(seen.into_iter().all(|v| v));
         let mut checksum = 0u64;
         for h in receivers {
             checksum ^= h.join().expect("receiver worker panic");
@@ -102,8 +106,10 @@ fn run_case(txs: u64, record_size: usize, streams: usize) -> Row {
         let ready = Arc::clone(&ready);
         let go = Arc::clone(&go);
         senders.push(thread::spawn(move || {
-            let stream = TcpStream::connect(addr).expect("connect loopback stream");
+            let mut stream = TcpStream::connect(addr).expect("connect loopback stream");
             stream.set_nodelay(true).expect("sender TCP_NODELAY");
+            stream.write_all(&(s as u64).to_le_bytes()).expect("write stream id handshake");
+
             let mut writer = BufWriter::with_capacity(1 << 20, stream);
             let mut record = vec![0xA5u8; record_size];
             let count = stream_count(txs, streams, s);
@@ -124,23 +130,13 @@ fn run_case(txs: u64, record_size: usize, streams: usize) -> Row {
     let start = Instant::now();
     go.wait();
 
-    for h in senders {
-        h.join().expect("sender worker panic");
-    }
+    for h in senders { h.join().expect("sender worker panic"); }
     let checksum = receiver_manager.join().expect("receiver manager panic");
     let elapsed_s = start.elapsed().as_secs_f64();
     let tx_s = txs as f64 / elapsed_s;
     let gb_s = (txs as f64 * record_size as f64) / elapsed_s / 1_000_000_000.0;
 
-    Row {
-        txs,
-        record_size,
-        streams,
-        elapsed_s,
-        tx_s,
-        gb_s,
-        checksum,
-    }
+    Row { txs, record_size, streams, elapsed_s, tx_s, gb_s, checksum }
 }
 
 fn main() {
@@ -149,7 +145,7 @@ fn main() {
     let sizes = parse_list(&args, "--sizes", vec![32usize, 64, 128, 256]);
     let streams = parse_list(&args, "--streams", vec![1usize, 4]);
 
-    println!("CALIBRE GEN2 PERF-008 v0.8.0");
+    println!("CALIBRE GEN2 PERF-008 v0.8.1");
     println!("REAL LOOPBACK TRANSACTION-ENVELOPE INGRESS");
     println!("Transport: TCP 127.0.0.1 | integrity field checked on every record");
     println!("Security: OFF | Consensus: OFF | Persistence: OFF");
@@ -163,26 +159,16 @@ fn main() {
         for &size in &sizes {
             for &s in &streams {
                 let r = run_case(n, size, s);
-                println!(
-                    "record={:<4}B streams={:<2} tx/s={:>12.0} wire={:>6.3} GB/s elapsed={:>7.3}s checksum={:016x}",
-                    r.record_size, r.streams, r.tx_s, r.gb_s, r.elapsed_s, r.checksum
-                );
+                println!("record={:<4}B streams={:<2} tx/s={:>12.0} wire={:>6.3} GB/s elapsed={:>7.3}s checksum={:016x}", r.record_size, r.streams, r.tx_s, r.gb_s, r.elapsed_s, r.checksum);
                 rows.push(r);
             }
         }
         println!();
     }
 
-    let best = rows
-        .iter()
-        .max_by(|a, b| a.tx_s.partial_cmp(&b.tx_s).unwrap())
-        .expect("results");
-
+    let best = rows.iter().max_by(|a, b| a.tx_s.partial_cmp(&b.tx_s).unwrap()).expect("results");
     println!("=== DECISION ===");
-    println!(
-        "BEST LOOPBACK INGRESS: {:.0} tx/s | {}B records | {} streams | {:.3} GB/s",
-        best.tx_s, best.record_size, best.streams, best.gb_s
-    );
+    println!("BEST LOOPBACK INGRESS: {:.0} tx/s | {}B records | {} streams | {:.3} GB/s", best.tx_s, best.record_size, best.streams, best.gb_s);
     for size in [32usize, 64, 128, 256] {
         if let Some(r) = rows.iter().find(|r| r.txs == 1_000_000 && r.record_size == size && r.streams == 4) {
             println!("1M / 4 STREAMS / {}B: {:.0} tx/s | {:.3} GB/s", size, r.tx_s, r.gb_s);
