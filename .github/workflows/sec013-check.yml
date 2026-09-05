@@ -1,0 +1,23 @@
+name: CALIBRE SECURITY SEC-013 Check
+
+on:
+  push:
+    paths:
+      - 'sec013/**'
+      - '.github/workflows/sec013-check.yml'
+  workflow_dispatch:
+
+jobs:
+  windows-run:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: sec013
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version; cargo --version
+      - name: Test SEC-013 logic
+        run: cargo test --release
+      - name: Run SEC-013 cross-epoch committee handoff experiment
+        run: cargo run --release
