@@ -1,0 +1,16 @@
+[package]
+name = "calibre-sec016"
+version = "0.16.0"
+edition = "2024"
+
+[dependencies]
+ed25519-dalek = "2.2.0"
+blake3 = "1.8.7"
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
