@@ -1,0 +1,22 @@
+name: CALIBRE SECURITY SEC-016 Check
+
+on:
+  push:
+    paths:
+      - 'sec016/**'
+      - '.github/workflows/sec016-check.yml'
+  workflow_dispatch:
+
+jobs:
+  windows-run:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version; cargo --version
+      - name: Test SEC-016 logic
+        working-directory: sec016
+        run: cargo test --release
+      - name: Run SEC-016 retired-key ratchet attack experiment
+        working-directory: sec016
+        run: cargo run --release
