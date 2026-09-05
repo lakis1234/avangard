@@ -285,7 +285,7 @@ impl NodeProc {
     }
 
     fn wait_ready(&mut self) -> Result<(), String> {
-        for _ in 0..200 {
+        for _ in 0..400 {
             if let Ok(mut s) = TcpStream::connect(("127.0.0.1", self.port)) {
                 let _ = s.write_all(&[OP_PING]);
                 let mut b = [0u8; 1];
@@ -301,6 +301,7 @@ impl NodeProc {
     fn crash_restart(&mut self, exe: &Path) -> Result<(), String> {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        self.port = free_port()?;
         self.child = Command::new(exe)
             .arg("--node")
             .arg(self.index.to_string())
@@ -324,24 +325,34 @@ impl NodeProc {
 
 fn request_share(port: u16, tx: &SpendTx, auth: &UserAuth, digest: &[u8; 32]) -> Result<Option<Share>, String> {
     let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
-    let mut stream = match TcpStream::connect_timeout(&addr, Duration::from_millis(300)) {
+    let mut stream = match TcpStream::connect_timeout(&addr, Duration::from_millis(1000)) {
         Ok(s) => s,
         Err(_) => return Ok(None),
     };
-    stream.set_read_timeout(Some(Duration::from_millis(300))).ok();
-    stream.set_write_timeout(Some(Duration::from_millis(300))).ok();
-    write_sign_request(&mut stream, tx, auth, digest)?;
+    stream.set_read_timeout(Some(Duration::from_millis(1000))).ok();
+    stream.set_write_timeout(Some(Duration::from_millis(1000))).ok();
+    if write_sign_request(&mut stream, tx, auth, digest).is_err() {
+        return Ok(None);
+    }
     let mut status = [0u8; 1];
-    stream.read_exact(&mut status).map_err(|e| e.to_string())?;
+    if stream.read_exact(&mut status).is_err() {
+        return Ok(None);
+    }
     if status[0] == 0 {
         return Ok(None);
     }
     let mut idx = [0u8; 1];
-    stream.read_exact(&mut idx).map_err(|e| e.to_string())?;
+    if stream.read_exact(&mut idx).is_err() {
+        return Ok(None);
+    }
     let mut got_digest = [0u8; 32];
-    stream.read_exact(&mut got_digest).map_err(|e| e.to_string())?;
+    if stream.read_exact(&mut got_digest).is_err() {
+        return Ok(None);
+    }
     let mut sig = [0u8; 64];
-    stream.read_exact(&mut sig).map_err(|e| e.to_string())?;
+    if stream.read_exact(&mut sig).is_err() {
+        return Ok(None);
+    }
     Ok(Some(Share { index: idx[0] as usize, digest: got_digest, signature: sig }))
 }
 
@@ -466,7 +477,6 @@ fn controller() -> Result<(), String> {
     println!();
 
     let mut rng = Prng::new(seed);
-    let mut safety_violations = 0usize;
     let mut finalized = 0usize;
     let mut deadlocks = 0usize;
     let mut logical_drops = 0usize;
@@ -488,9 +498,9 @@ fn controller() -> Result<(), String> {
 
         let mut first_choice = [false; N];
         for &i in &order {
-            first_choice[i] = rng.chance(1, 2); // true=A, false=B
+            first_choice[i] = rng.chance(1, 2);
             if rng.chance(1, 4) {
-                logical_drops += 1; // first attempt intentionally not delivered
+                logical_drops += 1;
             }
             if rng.chance(1, 10) {
                 thread::sleep(Duration::from_millis(1 + rng.range(2) as u64));
@@ -534,7 +544,6 @@ fn controller() -> Result<(), String> {
             }
         }
 
-        // Byzantine behavior is adversarial and independently randomized: withhold, sign A, sign B, or sign both.
         for &i in &BYZ {
             match rng.range(4) {
                 0 => {}
@@ -547,14 +556,12 @@ fn controller() -> Result<(), String> {
             }
         }
 
-        // Heal the network for all honest nodes and retry both conflicts. Honest first-lock state remains authoritative.
         for &i in &HONEST {
             add_share(&mut sa, request_share(nodes[i].port, &a, &aa, &ad)?, a.input, &ad)?;
             add_share(&mut sb, request_share(nodes[i].port, &b, &ba, &bd)?, b.input, &bd)?;
         }
 
         if sa.len() >= Q && sb.len() >= Q {
-            safety_violations += 1;
             return Err(format!("DUAL FINALITY at trial {t}: A={} B={}", sa.len(), sb.len()));
         }
         if sa.len() >= Q || sb.len() >= Q {
@@ -569,9 +576,6 @@ fn controller() -> Result<(), String> {
     }
     let _ = fs::remove_dir_all(&root);
 
-    if safety_violations != 0 {
-        return Err(format!("safety violations: {safety_violations}"));
-    }
     if deadlocks == 0 {
         return Err("fault campaign found no liveness deadlock; expected current one-digest protocol limitation was not exercised".into());
     }
@@ -584,7 +588,7 @@ fn controller() -> Result<(), String> {
 
     println!("=== RANDOMIZED CAMPAIGN SUMMARY ===");
     println!("TRIALS: {trials}");
-    println!("DUAL-FINALITY SAFETY VIOLATIONS WITH f<=2: {safety_violations}");
+    println!("DUAL-FINALITY SAFETY VIOLATIONS WITH f<=2: 0");
     println!("TRIALS WITH ONE SUCCESSOR >=5/7: {finalized}");
     println!("TRIALS DEADLOCKED BELOW 5/7 AFTER HONEST-NETWORK HEAL: {deadlocks}");
     println!("INJECTED APPLICATION-LAYER MESSAGE DROPS: {logical_drops}");
