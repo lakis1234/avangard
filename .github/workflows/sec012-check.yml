@@ -1,0 +1,27 @@
+name: CALIBRE SECURITY SEC-012 Check
+
+on:
+  push:
+    paths:
+      - 'sec012/**'
+      - '.github/workflows/sec012-check.yml'
+  pull_request:
+    paths:
+      - 'sec012/**'
+      - '.github/workflows/sec012-check.yml'
+  workflow_dispatch:
+
+jobs:
+  windows-run:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: sec012
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version; cargo --version
+      - name: Test SEC-012 model logic
+        run: cargo test --release
+      - name: Run SEC-012 bounded exhaustive model
+        run: cargo run --release
