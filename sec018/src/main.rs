@@ -102,6 +102,7 @@ fn fresh_nonce() -> [u8; 32] {
     nonce
 }
 
+#[cfg(test)]
 fn labelled_nonce(label: &[u8]) -> [u8; 32] {
     *blake3::hash(label).as_bytes()
 }
@@ -284,7 +285,7 @@ fn free_port() -> Result<u16, String> {
 }
 
 fn connect(port: u16) -> Option<TcpStream> {
-    let mut stream = TcpStream::connect(("127.0.0.1", port)).ok()?;
+    let stream = TcpStream::connect(("127.0.0.1", port)).ok()?;
     stream.set_read_timeout(Some(Duration::from_secs(1))).ok()?;
     stream.set_write_timeout(Some(Duration::from_secs(1))).ok()?;
     Some(stream)
