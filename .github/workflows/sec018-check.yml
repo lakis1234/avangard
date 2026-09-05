@@ -1,0 +1,40 @@
+name: CALIBRE SECURITY SEC-018 Check
+
+on:
+  push:
+    paths:
+      - 'sec018/**'
+      - '.github/workflows/sec018-check.yml'
+  pull_request:
+    paths:
+      - 'sec018/**'
+      - '.github/workflows/sec018-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  model-test:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: sec018
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version; cargo --version
+      - name: Test SEC-018 protocol gate
+        run: cargo test --release
+      - name: Run SEC-018 adversarial model
+        run: cargo run --release
+      - name: Type-check Windows ARM64
+        run: rustup target add aarch64-pc-windows-msvc; cargo check --release --target aarch64-pc-windows-msvc
+      - name: Preserve resolved dependency lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: sec018-cargo-lock
+          path: sec018/Cargo.lock
+          if-no-files-found: error
+      - name: Hardware safety note
+        run: Write-Output "SEC-018 v0.18.0 is a non-destructive protocol model; it does not define, increment, certify, or delete a live TPM NV index."
