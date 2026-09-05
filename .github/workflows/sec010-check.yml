@@ -1,0 +1,30 @@
+name: CALIBRE SECURITY SEC-010 Check
+
+on:
+  push:
+    paths:
+      - 'sec010/**'
+      - '.github/workflows/sec010-check.yml'
+  pull_request:
+    paths:
+      - 'sec010/**'
+      - '.github/workflows/sec010-check.yml'
+  workflow_dispatch:
+
+jobs:
+  windows-run:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: sec010
+    env:
+      CALIBRE_SEC010_TRIALS: '250'
+      CALIBRE_SEC010_SEED: '14128301678598656001'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version; cargo --version
+      - name: Test SEC-010 logic
+        run: cargo test --release
+      - name: Run SEC-010 randomized conflict-local round-change campaign
+        run: cargo run --release
