@@ -134,7 +134,7 @@ tpm2_createak \
     -c "${RUN_DIR}/ak.ctx" \
     -u "${RUN_DIR}/ak.pub" \
     -n "${RUN_DIR}/ak.name"
-tpm2_flushcontext "${RUN_DIR}/ek.ctx"
+tpm2_flushcontext -t
 tpm2_evictcontrol -Q -C o -c "${RUN_DIR}/ak.ctx" "${AK_HANDLE}"
 tpm2_flushcontext -t
 tpm2_readpublic -c "${AK_HANDLE}" -f pem -o "${RUN_DIR}/ak-public.pem" \
