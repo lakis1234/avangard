@@ -1,0 +1,19 @@
+[package]
+name = "calibre-sec017"
+version = "0.17.0"
+edition = "2024"
+
+[dependencies]
+blake3 = "1.8.7"
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+sha2 = "0.10.9"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Security_Cryptography"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

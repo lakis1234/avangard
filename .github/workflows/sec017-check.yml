@@ -1,0 +1,37 @@
+name: CALIBRE SECURITY SEC-017 Check
+
+on:
+  push:
+    paths:
+      - 'sec017/**'
+      - '.github/workflows/sec017-check.yml'
+  pull_request:
+    paths:
+      - 'sec017/**'
+      - '.github/workflows/sec017-check.yml'
+  workflow_dispatch:
+
+jobs:
+  windows-build-and-model-tests:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: sec017
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version; cargo --version
+      - name: Test SEC-017 snapshot and transcript logic
+        run: cargo test --release
+      - name: Build SEC-017 Windows CNG live binary
+        run: cargo build --release
+      - name: Type-check the Windows ARM64 target
+        run: rustup target add aarch64-pc-windows-msvc; cargo check --release --target aarch64-pc-windows-msvc
+      - name: Preserve resolved dependency lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: sec017-cargo-lock
+          path: sec017/Cargo.lock
+          if-no-files-found: error
+      - name: Hardware scope note
+        run: Write-Output "CI compiles and tests the model only; it does not execute the live TPM key mutation experiment."
