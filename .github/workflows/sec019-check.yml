@@ -1,0 +1,48 @@
+name: CALIBRE SECURITY SEC-019 Check
+
+on:
+  push:
+    paths:
+      - 'sec019/**'
+      - '.github/workflows/sec019-check.yml'
+  pull_request:
+    paths:
+      - 'sec019/**'
+      - '.github/workflows/sec019-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-swtpm-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install isolated TPM tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends swtpm tpm2-tools openssl
+      - name: Record tool versions
+        run: |
+          swtpm --version
+          tpm2_nvcertify --version
+          openssl version
+          python3 --version
+      - name: Test strict TPMS_ATTEST parser
+        run: python3 -m unittest discover -s sec019/tests -v
+      - name: Check experiment shell syntax
+        run: bash -n sec019/run_experiment_019.sh
+      - name: Run actual TPM2 NV integration against isolated swtpm
+        env:
+          SEC019_EVIDENCE_DIR: ${{ runner.temp }}/sec019-evidence
+        run: bash sec019/run_experiment_019.sh
+      - name: Preserve public SEC-019 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: sec019-public-attestation-evidence
+          path: ${{ runner.temp }}/sec019-evidence
+          if-no-files-found: error
+      - name: Physical TPM safety note
+        run: echo "SEC-019 uses only an ephemeral file-backed swtpm; no physical TPM, PCR, NV index, hierarchy, Secure Boot, BitLocker, or existing key is accessed."
