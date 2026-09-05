@@ -1,0 +1,40 @@
+name: CALIBRE SECURITY SEC-018 Check
+
+on:
+  push:
+    paths:
+      - 'sec018/**'
+      - '.github/workflows/sec018-check.yml'
+  pull_request:
+    paths:
+      - 'sec018/**'
+      - '.github/workflows/sec018-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-build-and-model-tests:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: sec018
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version; cargo --version
+      - name: Test SEC-018 generation-gate model
+        run: cargo test --release --locked
+      - name: Build SEC-018 Windows CNG live binary
+        run: cargo build --release --locked
+      - name: Type-check the Windows ARM64 target
+        run: rustup target add aarch64-pc-windows-msvc; cargo check --release --locked --target aarch64-pc-windows-msvc
+      - name: Preserve resolved dependency lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: sec018-cargo-lock
+          path: sec018/Cargo.lock
+          if-no-files-found: error
+      - name: Hardware scope note
+        run: Write-Output "CI compiles and tests the generation-gate model only; it does not create or delete the two live TPM keys."
