@@ -1,0 +1,30 @@
+name: CALIBRE SECURITY SEC-008.2 Check
+
+on:
+  push:
+    paths:
+      - 'sec0082/**'
+      - '.github/workflows/sec0082-check.yml'
+  pull_request:
+    paths:
+      - 'sec0082/**'
+      - '.github/workflows/sec0082-check.yml'
+  workflow_dispatch:
+
+jobs:
+  windows-run:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: sec0082
+    env:
+      CALIBRE_SEC0082_TRIALS: '300'
+      CALIBRE_SEC0082_SEED: '14128301678598524929'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version; cargo --version
+      - name: Test SEC-008.2 logic
+        run: cargo test --release
+      - name: Run SEC-008.2 hardened randomized TCP fault campaign
+        run: cargo run --release
