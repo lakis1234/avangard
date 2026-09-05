@@ -1,0 +1,22 @@
+name: CALIBRE SECURITY SEC-015 Check
+
+on:
+  push:
+    paths:
+      - 'sec015/**'
+      - '.github/workflows/sec015-check.yml'
+  workflow_dispatch:
+
+jobs:
+  windows-run:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version; cargo --version
+      - name: Test SEC-015 logic
+        working-directory: sec015
+        run: cargo test --release
+      - name: Run SEC-015 offline bootstrap experiment
+        working-directory: sec015
+        run: cargo run --release
