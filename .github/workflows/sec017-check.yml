@@ -11,6 +11,9 @@ on:
       - '.github/workflows/sec017-check.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   windows-build-and-model-tests:
     runs-on: windows-latest
