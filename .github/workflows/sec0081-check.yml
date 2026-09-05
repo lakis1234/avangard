@@ -1,0 +1,29 @@
+name: CALIBRE SECURITY SEC-008.1 Check
+
+on:
+  push:
+    paths:
+      - 'sec0081/**'
+      - '.github/workflows/sec0081-check.yml'
+  pull_request:
+    paths:
+      - 'sec0081/**'
+      - '.github/workflows/sec0081-check.yml'
+  workflow_dispatch:
+
+jobs:
+  windows-run:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: sec0081
+    env:
+      CALIBRE_SEC0081_TRIALS: '1200'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version; cargo --version
+      - name: Test SEC-008.1 logic
+        run: cargo test --release
+      - name: Run SEC-008.1 durability campaign
+        run: cargo run --release
