@@ -1,0 +1,23 @@
+name: CALIBRE SECURITY SEC-014 Check
+
+on:
+  push:
+    paths:
+      - 'sec014/**'
+      - '.github/workflows/sec014-check.yml'
+  workflow_dispatch:
+
+jobs:
+  windows-run:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: sec014
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version; cargo --version
+      - name: Test SEC-014 logic
+        run: cargo test --release
+      - name: Run SEC-014 multi-generation multi-epoch experiment
+        run: cargo run --release
