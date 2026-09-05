@@ -109,6 +109,24 @@ fn unique_key_name() -> String {
     format!("CALIBRE_SEC017_{}_{}_{}", std::process::id(), stamp, suffix)
 }
 
+fn is_generated_key_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("CALIBRE_SEC017_") else {
+        return false;
+    };
+    let mut parts = rest.split('_');
+    let (Some(pid), Some(stamp), Some(suffix), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    !pid.is_empty()
+        && pid.bytes().all(|byte| byte.is_ascii_digit())
+        && !stamp.is_empty()
+        && stamp.bytes().all(|byte| byte.is_ascii_digit())
+        && suffix.len() == 16
+        && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 #[cfg(windows)]
 mod windows_live {
     use super::*;
@@ -120,22 +138,26 @@ mod windows_live {
     use std::thread;
     use std::time::{Duration, Instant};
     use windows_sys::Win32::Security::Cryptography::{
-        BCRYPT_ECCPRIVATE_BLOB, BCRYPT_ECCPUBLIC_BLOB, MS_KEY_STORAGE_PROVIDER,
-        MS_PLATFORM_CRYPTO_PROVIDER, NCRYPT_ALLOW_SIGNING_FLAG, NCRYPT_ECDSA_P256_ALGORITHM,
-        NCRYPT_EXPORT_POLICY_PROPERTY, NCRYPT_HANDLE, NCRYPT_IMPL_HARDWARE_FLAG,
-        NCRYPT_IMPL_TYPE_PROPERTY, NCRYPT_KEY_HANDLE, NCRYPT_KEY_USAGE_PROPERTY,
-        NCRYPT_PERSIST_FLAG, NCRYPT_PROV_HANDLE, NCRYPT_SILENT_FLAG, NCryptCreatePersistedKey,
-        NCryptDeleteKey, NCryptExportKey, NCryptFinalizeKey, NCryptFreeObject, NCryptGetProperty,
-        NCryptImportKey, NCryptIsAlgSupported, NCryptOpenKey, NCryptOpenStorageProvider,
-        NCryptSetProperty, NCryptSignHash, NCryptVerifySignature,
+        BCRYPT_ECCPRIVATE_BLOB, BCRYPT_ECCPUBLIC_BLOB, BCRYPT_PRIVATE_KEY_BLOB,
+        MS_KEY_STORAGE_PROVIDER, MS_PLATFORM_CRYPTO_PROVIDER, NCRYPT_ALLOW_SIGNING_FLAG,
+        NCRYPT_ECDSA_P256_ALGORITHM, NCRYPT_EXPORT_POLICY_PROPERTY, NCRYPT_HANDLE,
+        NCRYPT_IMPL_HARDWARE_FLAG, NCRYPT_IMPL_TYPE_PROPERTY, NCRYPT_KEY_HANDLE,
+        NCRYPT_KEY_USAGE_PROPERTY, NCRYPT_OPAQUETRANSPORT_BLOB, NCRYPT_PERSIST_FLAG,
+        NCRYPT_PKCS8_PRIVATE_KEY_BLOB, NCRYPT_PROV_HANDLE, NCRYPT_SILENT_FLAG,
+        NCryptCreatePersistedKey, NCryptDeleteKey, NCryptExportKey, NCryptFinalizeKey,
+        NCryptFreeObject, NCryptGetProperty, NCryptImportKey, NCryptIsAlgSupported,
+        NCryptOpenKey, NCryptOpenStorageProvider, NCryptSetProperty, NCryptSignHash,
+        NCryptVerifySignature,
     };
 
     const ACK_VALUE: &str = "CREATE_DELETE_ONE_DISPOSABLE_KEY";
     const NTE_BAD_SIGNATURE_STATUS: i32 = 0x8009_0006u32 as i32;
+    const NTE_BAD_TYPE_STATUS: i32 = 0x8009_000au32 as i32;
     const NTE_BAD_KEY_STATE_STATUS: i32 = 0x8009_000bu32 as i32;
     const NTE_PERM_STATUS: i32 = 0x8009_0010u32 as i32;
     const NTE_BAD_KEYSET_STATUS: i32 = 0x8009_0016u32 as i32;
     const NTE_INVALID_HANDLE_STATUS: i32 = 0x8009_0026u32 as i32;
+    const NTE_NOT_SUPPORTED_STATUS: i32 = 0x8009_0029u32 as i32;
 
     struct Provider(NCRYPT_PROV_HANDLE);
 
@@ -185,7 +207,7 @@ mod windows_live {
             if self.0 == 0 {
                 return Ok(());
             }
-            let status = unsafe { NCryptDeleteKey(self.0, NCRYPT_SILENT_FLAG) };
+            let status = unsafe { NCryptDeleteKey(self.0, 0) };
             if status == 0 {
                 // NCryptDeleteKey frees the handle when it succeeds.
                 self.0 = 0;
@@ -349,20 +371,21 @@ mod windows_live {
         Ok(bytes)
     }
 
-    fn private_export_probe(key: NCRYPT_KEY_HANDLE) -> i32 {
+    fn export_size_probe(key: NCRYPT_KEY_HANDLE, blob_type: *const u16) -> (i32, u32) {
         let mut len = 0u32;
-        unsafe {
+        let status = unsafe {
             NCryptExportKey(
                 key,
                 0,
-                BCRYPT_ECCPRIVATE_BLOB,
+                blob_type,
                 null(),
                 null_mut(),
                 0,
                 &mut len,
                 NCRYPT_SILENT_FLAG,
             )
-        }
+        };
+        (status, len)
     }
 
     fn sign_hash(key: NCRYPT_KEY_HANDLE, digest: &[u8; 32]) -> (i32, Vec<u8>) {
@@ -464,7 +487,7 @@ mod windows_live {
         if std::env::var("CALIBRE_TPM_KEY_ACK").ok().as_deref() != Some(ACK_VALUE) {
             return Err("held-handle child refused without the live-test acknowledgement".into());
         }
-        if !name.starts_with("CALIBRE_SEC017_") || dir.file_name().and_then(|v| v.to_str()) != Some(name) {
+        if !is_generated_key_name(name) || dir.file_name().and_then(|v| v.to_str()) != Some(name) {
             return Err("held-handle child refused a non-SEC-017 key name or work directory".into());
         }
         let provider = Provider::open(MS_PLATFORM_CRYPTO_PROVIDER)?;
@@ -519,7 +542,7 @@ mod windows_live {
             }
         }
         let handle = key.take();
-        let status = unsafe { NCryptDeleteKey(handle, NCRYPT_SILENT_FLAG) };
+        let status = unsafe { NCryptDeleteKey(handle, 0) };
         if status != 0 {
             unsafe { let _ = NCryptFreeObject(handle as NCRYPT_HANDLE); }
             return Err(format!("cleanup NCryptDeleteKey failed for {name}: {}", status_hex(status)));
@@ -528,7 +551,7 @@ mod windows_live {
     }
 
     fn run_controller() -> Result<(), String> {
-        println!("CALIBRE SECURITY SEC-017 v0.17.0");
+        println!("CALIBRE SECURITY SEC-017 v0.17.1");
         println!("WINDOWS TPM PLATFORM KEY CONTAINMENT / RETIREMENT / PRE-OPENED-HANDLE ATTACK");
         println!("One unique current-user ECDSA P-256 key; Microsoft Platform Crypto Provider; one physical host");
         println!("The provider must report a hardware implementation; TPM physical packaging is not inferred");
@@ -572,22 +595,64 @@ mod windows_live {
             if export_policy != 0 { return Err(format!("export policy was 0x{export_policy:08x}, expected zero")); }
             if usage & NCRYPT_ALLOW_SIGNING_FLAG == 0 { return Err(format!("signing usage flag missing: 0x{usage:08x}")); }
 
-            let private_status = private_export_probe(created.0);
-            let private_export_result = match private_status {
-                NTE_PERM_STATUS => "REJECTED_POLICY_DENIAL_PASS".to_string(),
-                0 => "SIZE_QUERY_SUCCEEDED_SECURITY_FINDING".to_string(),
-                other => format!("INCONCLUSIVE_UNEXPECTED_STATUS_{}", status_hex(other)),
-            };
             println!("CURRENT-USER TPM KEY CREATED / FINALIZED / SIGNING-ONLY: PASS");
             println!("PUBLIC KEY EXPORT: PASS ({} bytes)", public_blob.len());
+
+            let private_routes = [
+                ("ECC_PRIVATE", BCRYPT_ECCPRIVATE_BLOB),
+                ("GENERIC_PRIVATE", BCRYPT_PRIVATE_KEY_BLOB),
+                ("PKCS8_PRIVATE", NCRYPT_PKCS8_PRIVATE_KEY_BLOB),
+            ];
+            let mut private_route_succeeded = false;
+            let mut private_route_unexpected = false;
+            let mut private_route_policy_denied = false;
+            for (label, blob_type) in private_routes {
+                let (status, len) = export_size_probe(created.0, blob_type);
+                let interpretation = match status {
+                    0 => {
+                        private_route_succeeded = true;
+                        format!("SIZE QUERY SUCCEEDED ({len} bytes) -> SECURITY FINDING; BYTES NOT EXPORTED")
+                    }
+                    NTE_PERM_STATUS => {
+                        private_route_policy_denied = true;
+                        "REJECTED BY EXPORT POLICY".to_string()
+                    }
+                    NTE_BAD_TYPE_STATUS | NTE_NOT_SUPPORTED_STATUS => {
+                        "FORMAT UNSUPPORTED BY THIS PROVIDER".to_string()
+                    }
+                    other => {
+                        private_route_unexpected = true;
+                        format!("UNEXPECTED OPERATIONAL ERROR {} -> INCONCLUSIVE", status_hex(other))
+                    }
+                };
+                println!(
+                    "PRIVATE EXPORT ROUTE {label}: {interpretation} ({})",
+                    status_hex(status)
+                );
+            }
+            let private_export_result = if private_route_succeeded {
+                "AT_LEAST_ONE_STANDARD_SIZE_QUERY_SUCCEEDED_SECURITY_FINDING"
+            } else if private_route_unexpected {
+                "NO_ROUTE_SUCCEEDED_BUT_AT_LEAST_ONE_STATUS_WAS_INCONCLUSIVE"
+            } else if private_route_policy_denied {
+                "PASS_TESTED_ROUTES_POLICY_DENIED_OR_UNSUPPORTED"
+            } else {
+                "NO_TESTED_STANDARD_PRIVATE_EXPORT_FORMAT_SUPPORTED"
+            };
+
+            let (opaque_status, opaque_len) =
+                export_size_probe(created.0, NCRYPT_OPAQUETRANSPORT_BLOB);
+            let opaque_export_result = match opaque_status {
+                0 => format!("SIZE_QUERY_SUPPORTED_{opaque_len}_BYTES_NOT_EXPORTED"),
+                NTE_PERM_STATUS => "REJECTED_BY_EXPORT_POLICY".to_string(),
+                NTE_BAD_TYPE_STATUS | NTE_NOT_SUPPORTED_STATUS => {
+                    "FORMAT_UNSUPPORTED_BY_THIS_PROVIDER".to_string()
+                }
+                other => format!("INCONCLUSIVE_STATUS_{}", status_hex(other)),
+            };
             println!(
-                "ORDINARY ECC PRIVATE-KEY EXPORT SIZE QUERY WITH POLICY ZERO: {} ({})",
-                match private_status {
-                    NTE_PERM_STATUS => "REJECTED BY POLICY -> PASS",
-                    0 => "SUCCEEDED -> SECURITY FINDING (PRIVATE BYTES NOT REQUESTED)",
-                    _ => "UNEXPECTED ERROR -> INCONCLUSIVE",
-                },
-                status_hex(private_status)
+                "OPAQUE PROVIDER-BLOB SIZE QUERY: {opaque_export_result} ({})",
+                status_hex(opaque_status)
             );
 
             let snapshot = AppSnapshot { key_name: key_name.clone(), public_blob: public_blob.clone() };
@@ -638,7 +703,7 @@ mod windows_live {
                 let mut delete_handle = open_named(&provider, &key_name)
                     .map_err(|s| format!("open deletion handle failed: {}", status_hex(s)))?;
                 let raw_delete = delete_handle.take();
-                let delete_status = unsafe { NCryptDeleteKey(raw_delete, NCRYPT_SILENT_FLAG) };
+                let delete_status = unsafe { NCryptDeleteKey(raw_delete, 0) };
                 if delete_status != 0 {
                     unsafe { let _ = NCryptFreeObject(raw_delete as NCRYPT_HANDLE); }
                     return Err(format!("NCryptDeleteKey failed: {}", status_hex(delete_status)));
@@ -698,6 +763,7 @@ mod windows_live {
                 println!();
                 println!("=== SEC-017 DECISION ===");
                 println!("TPM_KEY_CONTAINMENT_NORMAL_PRIVATE_EXPORT={private_export_result}");
+                println!("OPAQUE_PROVIDER_BLOB_EXPORT_ROUTE={opaque_export_result}");
                 println!("NAMED_KEY_REOPEN_AFTER_DELETE={}", if open_after_close { "SUCCEEDED_SECURITY_FAIL" } else { "REJECTED_IN_TESTED_PROVIDER" });
                 println!(
                     "RAW_OLD_KEY_OPERATION_AFTER_DELETE={}",
@@ -758,12 +824,36 @@ mod windows_live {
         nonce
     }
 
-    pub fn run(args: &[String]) -> Result<(), String> {
-        if args.get(1).map(String::as_str) == Some("--held-child") {
-            if args.len() != 4 { return Err("usage: --held-child <key-name> <work-dir>".into()); }
-            return run_held_child(&args[2], &PathBuf::from(&args[3]));
+    fn run_cleanup_exact(name: &str) -> Result<(), String> {
+        println!("CALIBRE SECURITY SEC-017 v0.17.1 — EXACT-NAME RECOVERY CLEANUP");
+        if std::env::var("CALIBRE_TPM_KEY_ACK").ok().as_deref() != Some(ACK_VALUE) {
+            return Err("cleanup refused without the live-test acknowledgement".into());
         }
-        run_controller()
+        if !is_generated_key_name(name) {
+            return Err("cleanup refused: name does not match the generated SEC-017 key format".into());
+        }
+        let provider = Provider::open(MS_PLATFORM_CRYPTO_PROVIDER)?;
+        match cleanup_exact(&provider, name, None)? {
+            true => println!("EXACT-NAME RECOVERY CLEANUP: REMOVED {name}"),
+            false => println!("EXACT-NAME RECOVERY CLEANUP: KEY ALREADY ABSENT ({name})"),
+        }
+        println!("TPM CLEAR / PCR / NV / HIERARCHY / BITLOCKER MODIFIED: NO");
+        Ok(())
+    }
+
+    pub fn run(args: &[String]) -> Result<(), String> {
+        match args.get(1).map(String::as_str) {
+            Some("--held-child") => {
+                if args.len() != 4 { return Err("usage: --held-child <key-name> <work-dir>".into()); }
+                run_held_child(&args[2], &PathBuf::from(&args[3]))
+            }
+            Some("--cleanup-exact") => {
+                if args.len() != 3 { return Err("usage: --cleanup-exact <key-name>".into()); }
+                run_cleanup_exact(&args[2])
+            }
+            None => run_controller(),
+            Some(_) => Err("usage: calibre-sec017 [--cleanup-exact <generated-key-name>]".into()),
+        }
     }
 }
 
@@ -778,7 +868,7 @@ fn main() {
 
 #[cfg(not(windows))]
 fn main() {
-    println!("CALIBRE SECURITY SEC-017 v0.17.0");
+    println!("CALIBRE SECURITY SEC-017 v0.17.1");
     println!("This live experiment requires Windows CNG and the Microsoft Platform Crypto Provider.");
 }
 
@@ -829,7 +919,17 @@ mod tests {
     fn unique_names_are_calibre_namespaced() {
         let a = unique_key_name();
         let b = unique_key_name();
-        assert!(a.starts_with("CALIBRE_SEC017_"));
+        assert!(is_generated_key_name(&a));
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn cleanup_name_validation_is_exact() {
+        assert!(is_generated_key_name(
+            "CALIBRE_SEC017_3684_1788610804510636400_52227aa81d9ed89f"
+        ));
+        assert!(!is_generated_key_name("CALIBRE_SEC017_TEST_ONLY"));
+        assert!(!is_generated_key_name("CALIBRE_SEC017_1_2_abc/def"));
+        assert!(!is_generated_key_name("unrelated-key"));
     }
 }

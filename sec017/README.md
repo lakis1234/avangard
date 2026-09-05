@@ -5,12 +5,13 @@ SEC-017 is the first live Windows hardware-key follow-up to the pre-retirement s
 The experiment creates exactly one uniquely named, current-user ECDSA P-256 key through the **Microsoft Platform Crypto Provider** on one physical host. It requires the provider to report `NCRYPT_IMPL_HARDWARE_FLAG`, forbids a software fallback, sets signing-only usage, leaves the default export policy unchanged, and requires the queried policy to be zero before continuing. A provider hardware flag does not identify whether the TPM is discrete, firmware-based, or integrated. It then tests:
 
 1. TPM-provider ECDSA P-256 support.
-2. Public-key export and ordinary ECC private-key export rejection.
+2. Public-key export plus three ordinary private-export size-query routes: ECC private, generic private, and PKCS #8 private. Unsupported formats are reported separately from policy denial; private bytes are never requested.
 3. A cross-process handle opened before retirement and a valid baseline freshness signature.
 4. `NCryptDeleteKey` through a separately opened deletion handle.
 5. Fresh open-by-name attempts while the attacker's old handle is live and again after it closes.
 6. A never-before-seen client nonce delivered to the attack process only after deletion.
 7. Whether the key name recovered from a checksummed CALIBRE application snapshot (containing only that name and public blob) resolves after deletion. Snapshot restoration itself is not described as recreating a key.
+8. Whether an opaque provider-specific transport-blob size query is supported, without exporting the blob. Support does not prove that a blob is replayable; it keeps same-TPM rollback explicitly unresolved.
 
 The pre-opened-handle outcome is intentionally empirical. Microsoft's documented `NCryptDeleteKey` contract says that it deletes the key and frees the handle passed to it; it does not promise that every other handle already open in another process is immediately revoked.
 
@@ -36,9 +37,17 @@ The crate pins Rust 1.98.1 and commits `Cargo.lock`, matching the Windows ARM64 
 
 If execution is interrupted after key creation, the program prints the exact unique key name. Normal and error exits attempt cleanup using only that exact name.
 
+Version 0.17.1 also provides a recovery-only mode for a name printed by an interrupted or failed SEC-017 run:
+
+```powershell
+cargo run --release --locked -- --cleanup-exact "CALIBRE_SEC017_<exact-generated-name>"
+```
+
+The recovery mode requires the same acknowledgement, accepts only the full generated-name format, opens the current-user Platform provider without enumeration, and deletes only the supplied exact name. `NCryptDeleteKey` is invoked with flags zero because provider-specific silent-flag support is not portable.
+
 ## Interpretation
 
-An ordinary private export denial demonstrates protection through that CNG export route. It does **not** prove that no opaque TPM-wrapped provider blob exists, that a same-TPM disk rollback cannot restore such a blob, or that physical key remnants are erased.
+A policy denial demonstrates protection through that particular CNG export route. `NTE_BAD_TYPE` or `NTE_NOT_SUPPORTED` establishes only that the requested format is unavailable through that provider. It does **not** prove that no opaque TPM-wrapped provider blob exists, that a same-TPM disk rollback cannot restore such a blob, or that physical key remnants are erased.
 
 If the already-open attacker handle signs the post-delete fresh nonce, SEC-017 records a key-capability attack witness. If it is rejected, the result applies only to the tested provider and machine; cross-handle revocation is not treated as a general theorem.
 

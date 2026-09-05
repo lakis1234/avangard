@@ -32,7 +32,7 @@ dependencies = [
 
 [[package]]
 name = "calibre-sec017"
-version = "0.17.0"
+version = "0.17.1"
 dependencies = [
  "blake3",
  "rand_core",
