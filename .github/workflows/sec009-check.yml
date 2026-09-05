@@ -1,0 +1,27 @@
+name: CALIBRE SECURITY SEC-009 Check
+
+on:
+  push:
+    paths:
+      - 'sec009/**'
+      - '.github/workflows/sec009-check.yml'
+  pull_request:
+    paths:
+      - 'sec009/**'
+      - '.github/workflows/sec009-check.yml'
+  workflow_dispatch:
+
+jobs:
+  windows-run:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: sec009
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version; cargo --version
+      - name: Test SEC-009 logic
+        run: cargo test --release
+      - name: Run SEC-009 conflict-local round-change experiment
+        run: cargo run --release
