@@ -56,3 +56,10 @@ This experiment proves only the protocol acceptance logic and adversarial thresh
 The next live stage must use an isolated vTPM/VHD or sacrificial test machine. It must pin both the attestation-key identity and NV-index Name, bind the client nonce through `qualifyingData`, verify the returned TPM attestation structure and signature, and avoid the user's PCR7/BitLocker-bound daily-use TPM.
 
 No TPM clear, PCR write, NV write, hierarchy change, Secure Boot change, BitLocker change, or existing-key operation is performed by SEC-018 v0.18.0.
+
+## Standards basis
+
+- TCG TPM 2.0 Library Part 3, section 31.2 defines an NV counter as monotonic and updateable only through `TPM2_NV_Increment`.
+- TCG TPM 2.0 Library Part 3, section 31.16 defines `TPM2_NV_Certify`, including caller-supplied `qualifyingData`, the NV index being certified, the returned attestation structure, and its signature.
+
+SEC-018 models those semantics but does not claim to execute either TPM command.
