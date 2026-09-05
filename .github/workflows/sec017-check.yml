@@ -25,11 +25,11 @@ jobs:
       - name: Rust versions
         run: rustc --version; cargo --version
       - name: Test SEC-017 snapshot and transcript logic
-        run: cargo test --release
+        run: cargo test --release --locked
       - name: Build SEC-017 Windows CNG live binary
-        run: cargo build --release
+        run: cargo build --release --locked
       - name: Type-check the Windows ARM64 target
-        run: rustup target add aarch64-pc-windows-msvc; cargo check --release --target aarch64-pc-windows-msvc
+        run: rustup target add aarch64-pc-windows-msvc; cargo check --release --locked --target aarch64-pc-windows-msvc
       - name: Preserve resolved dependency lockfile
         uses: actions/upload-artifact@v4
         with:

@@ -32,7 +32,7 @@ The live mode requires this explicit acknowledgement:
 $env:CALIBRE_TPM_KEY_ACK="CREATE_DELETE_ONE_DISPOSABLE_KEY"
 ```
 
-The crate pins Rust 1.98.1, matching the Windows ARM64 toolchain used for the surrounding CALIBRE experiments. GitHub CI compiles the Windows CNG path on a hosted x64 runner and runs the non-hardware model tests; the Snapdragon ARM64 build and TPM behavior are established only by the local command and its recorded output.
+The crate pins Rust 1.98.1 and commits `Cargo.lock`, matching the Windows ARM64 toolchain used for the surrounding CALIBRE experiments. GitHub CI compiles the Windows CNG path on a hosted x64 runner, type-checks the Windows ARM64 target, and runs the non-hardware model tests; live Snapdragon TPM behavior is established only by the local command and its recorded output.
 
 If execution is interrupted after key creation, the program prints the exact unique key name. Normal and error exits attempt cleanup using only that exact name.
 
