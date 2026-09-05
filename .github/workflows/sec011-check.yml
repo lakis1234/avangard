@@ -1,0 +1,27 @@
+name: CALIBRE SECURITY SEC-011 Check
+
+on:
+  push:
+    paths:
+      - 'sec011/**'
+      - '.github/workflows/sec011-check.yml'
+  pull_request:
+    paths:
+      - 'sec011/**'
+      - '.github/workflows/sec011-check.yml'
+  workflow_dispatch:
+
+jobs:
+  windows-run:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: sec011
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: rustc --version; cargo --version
+      - name: Test SEC-011 logic
+        run: cargo test --release
+      - name: Run SEC-011 crash-window durability experiment
+        run: cargo run --release
