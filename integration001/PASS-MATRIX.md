@@ -135,14 +135,14 @@ Phase A is the only phase the current default live run may claim. A valid Phase 
 |---|---|---|
 | B01 | Topology preflight | Seven distinct validator identities, threshold five, exactly two configured Byzantine identities where the scenario requires them, clean state, protocol version, test seed, and run configuration are recorded. |
 | B02 | Quorum validation | Five distinct active members are accepted. Four shares, duplicate identities, non-members, wrong committee, wrong generation, altered payload, and invalid signatures are rejected. |
-| B03 | Normal payment | Alice's input value `100` creates Bob `60`, Alice change `39`, and protocol fee `1`, with exactly one valid 5-of-7 certificate. |
+| B03 | Normal payment | Alice's input value `100` creates Bob `60`, Alice change `39`, and protocol fee `1`, with exactly one certified successor intent backed by a valid 5-of-7 PREVOTE-to-PRECOMMIT chain. Multiple valid signer-subset QCs for that same intent do not count as conflicting successors. |
 | B04 | Owner authorization | Unsigned, wrong-owner, or malformed authorizations can obtain at most the two Byzantine shares and never form a certificate. |
 | B05 | Signed-field mutation | Mutating recipient, amount, fee, input identity, input generation, asset, network, committee generation, or any output/effect invalidates the owner authorization. |
 | B06 | Monetary conservation | The accepted successor outputs plus fee equal the consumed value exactly. Checked arithmetic prevents overflow; no losing-conflict output, hidden mint, negative-equivalent value, or duplicate fee exists. |
 | B07 | Duplicate submission | Repeating the identical authorized intent is idempotent: it cannot create a second spend, a second fee, a different successor, or inflate certificate weight. |
-| B08 | Equivocating-owner boundary | An owner signs two valid conflicting intents. The result contains zero or one certificate, never two. Zero is reported as `SAFETY_PASS / EQUIVOCATION_LIVENESS_NOT_GUARANTEED`, not as full liveness. |
-| B09 | Exhaustive quorum/conflict model | All `2^5 * 4^2 = 512` abstract cases are evaluated: each of five honest signers first selects A or B, while each Byzantine signer selects A, B, both, or neither. No case creates two 5-of-7 certificates. |
-| B10 | Live concurrent conflict | Real concurrent delivery gives the same input two valid owner-authorized successors. Honest validators never issue conflicting PRECOMMITs or violate a durable PRECOMMIT lock; at most one successor certificate exists; outputs of the loser do not become live. A validator may change an uncertified PREVOTE in a later round, so this gate must not claim otherwise. Any claim that all 32 honest first-arrival patterns ran must be supported by 32 separately identified outcomes. |
+| B08 | Equivocating-owner boundary | An owner signs two valid conflicting intents. The result contains zero or one certified successor intent, never two conflicting certified intents. Zero is reported as `SAFETY_PASS / EQUIVOCATION_LIVENESS_NOT_GUARANTEED`, not as full liveness. |
+| B09 | Exhaustive quorum/conflict model | All `2^5 * 4^2 = 512` abstract cases are evaluated: each of five honest signers first selects A or B, while each Byzantine signer selects A, B, both, or neither. No case certifies both conflicting intents. |
+| B10 | Live concurrent conflict | Real concurrent delivery gives the same input two valid owner-authorized successors. Honest validators never issue conflicting PRECOMMITs or violate a durable PRECOMMIT lock; at most one conflicting successor intent is certified; outputs of the loser do not become live. Multiple signer-subset QCs for the same intent are allowed. Any controller-constructed QC using honest fixture keys is labeled as a synthetic white-box state-machine injection, not as an adversary-obtained QC. A validator may change an uncertified PREVOTE in a later round, so this gate must not claim otherwise. Any claim that all 32 honest first-arrival patterns ran must be supported by 32 separately identified outcomes. |
 | B11 | Unrelated payment batch | Up to 128 distinct input objects are submitted concurrently. At the audit setting `--bench-count 128`, all 128 valid, non-conflicting transfers finalize when five honest validators are available, with zero cross-input conflict. |
 | B12 | Schedule independence | The same independent transfer set is executed under each schedule actually implemented and reported. The final live-state multiset and monetary totals match. Forward, reverse, and five seeded shuffles remain Phase B-quality evidence unless all seven schedules are present. |
 | B13 | No acceptance-critical universal order | Transaction/certificate validity does not depend on a block hash, block height, longest-chain/fork-choice rule, global transaction sequence, completion-order-derived identifier, or shared mutable global fee state. Per-object generation and committee generation are allowed and must be reported separately. |
@@ -156,7 +156,7 @@ Phase A is the only phase the current default live run may claim. A valid Phase 
 PHASE_A_PASS =
     every implemented mandatory Phase A row executed and passed
     AND no unauthorized certificate
-    AND no two certificates consume the same input/version
+    AND no two conflicting successor intents are certified for the same input/version
     AND no monetary conservation violation
     AND no missing or ambiguous required evidence
 
@@ -231,7 +231,7 @@ The following are unconditional hard failures in either phase:
 
 ```text
 any unauthorized 5-of-7 certificate
-any two valid certificates consuming one input/version
+any two conflicting successor intents certified for one input/version
 any accepted state transition that violates monetary conservation
 any duplicate/non-member share increasing quorum weight
 any acknowledged honest vote missing after an in-scope restart
@@ -309,7 +309,7 @@ Every claimed result must answer all of the following:
 - Which exact B-rows executed?
 - Were the required faults actually injected and observed?
 - Which rows are `NOT_RUN` or `NOT_IMPLEMENTED`?
-- Were there zero unauthorized or conflicting certificates?
+- Were there zero unauthorized certificates and zero pairs of conflicting certified successor intents?
 - Did value conservation hold exactly?
 - Did any liveness statement rely on Byzantine cooperation?
 - Which metrics were measured, and which were `NOT_MEASURED`?

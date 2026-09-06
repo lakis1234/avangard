@@ -20,6 +20,8 @@ The Phase A target combines:
 
 The exact gate definitions and decision rules are in [`PASS-MATRIX.md`](PASS-MATRIX.md).
 
+The B10 opposing-QC probe is explicitly a synthetic white-box state-machine injection: the controller uses deterministic test fixture keys to construct a valid QC that the observed 3/2 network split did not produce. Evidence counts it separately from live transaction finality chains and never presents it as an adversary-obtained certificate.
+
 ## What "no blockchain" means here
 
 The tested path has:
@@ -110,9 +112,9 @@ CALIBRE INTEGRATION-001 PHASE A: PASS
 CALIBRE INTEGRATION-001 FULL CAMPAIGN: NOT IMPLEMENTED / NOT RUN
 ```
 
-Any unauthorized certificate, two valid successor certificates for one input/version, value-creation error, or duplicate/non-member quorum inflation is a hard failure.
+Any unauthorized certificate, two conflicting certified successor intents for one input/version, value-creation error, or duplicate/non-member quorum inflation is a hard failure. Multiple valid signer-subset QCs for the same intent are equivalent evidence, not conflicting successors.
 
-An equivocating owner may cause its own input to produce no certificate. This is a safe result if no two certificates exist, but it must be printed as:
+An equivocating owner may cause its own input to produce no certificate. This is a safe result if both conflicting intents are not certified, but it must be printed as:
 
 ```text
 SAFETY PASS / EQUIVOCATION LIVENESS NOT GUARANTEED

@@ -34,6 +34,8 @@ pub const REJECT_INVALID_PREVOTE_QC: u16 = 12;
 pub const REJECT_LOCAL_PREVOTE_MISSING: u16 = 13;
 pub const REJECT_DURABLE_LOCK: u16 = 14;
 pub const REJECT_SIGNING: u16 = 15;
+pub const REJECT_DURABLE_VOTE: u16 = 16;
+pub const REJECT_VOTE_PERSIST: u16 = 17;
 pub const REJECT_INVALID_FINALITY: u16 = 20;
 pub const REJECT_STATE_APPLY: u16 = 21;
 pub const REJECT_STATE_PERSIST: u16 = 22;
@@ -271,9 +273,20 @@ impl NodeServer {
         }
 
         self.validate_live_proposal(&proposal)?;
+        if let Some(rejection) = self.durable_vote_rejection(
+            conflict,
+            proposal.round,
+            PHASE_PREVOTE,
+            proposal.intent,
+        ) {
+            return Err(rejection);
+        }
         self.store
             .persist_vote(conflict, proposal.round, PHASE_PREVOTE, proposal.intent)
-            .map_err(|_| NodeRejection::new(REJECT_DURABLE_LOCK))?;
+            // All known durable conflicts were classified immediately above.
+            // Anything left is a lifecycle or persistence failure and must
+            // never masquerade as evidence that the intended lock fired.
+            .map_err(|_| NodeRejection::new(REJECT_VOTE_PERSIST))?;
         sign_vote(
             &self.manifest,
             PHASE_PREVOTE,
@@ -321,9 +334,17 @@ impl NodeServer {
             {
                 return Err(NodeRejection::new(REJECT_LOCAL_PREVOTE_MISSING));
             }
+            if let Some(rejection) = self.durable_vote_rejection(
+                conflict,
+                proposal.round,
+                PHASE_PRECOMMIT,
+                proposal.intent,
+            ) {
+                return Err(rejection);
+            }
             self.store
                 .persist_vote(conflict, proposal.round, PHASE_PRECOMMIT, proposal.intent)
-                .map_err(|_| NodeRejection::new(REJECT_DURABLE_LOCK))?;
+                .map_err(|_| NodeRejection::new(REJECT_VOTE_PERSIST))?;
             digest
         };
 
@@ -338,6 +359,28 @@ impl NodeServer {
             &self.signing_key,
         )
         .map_err(|_| NodeRejection::new(REJECT_SIGNING))
+    }
+
+    fn durable_vote_rejection(
+        &self,
+        conflict: Digest,
+        round: u64,
+        phase: u8,
+        intent: Digest,
+    ) -> Option<NodeRejection> {
+        if let Some(lock) = self.store.precommit_lock(conflict) {
+            if round < lock.round || intent != lock.digest {
+                return Some(NodeRejection::new(REJECT_DURABLE_LOCK));
+            }
+        }
+        if self
+            .store
+            .vote_digest(conflict, round, phase)
+            .is_some_and(|existing| existing != intent)
+        {
+            return Some(NodeRejection::new(REJECT_DURABLE_VOTE));
+        }
+        None
     }
 
     fn validate_live_proposal(&self, proposal: &Proposal) -> Result<(), NodeRejection> {

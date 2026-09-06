@@ -31,10 +31,10 @@ jobs:
           rustc --version
           cargo --version
       - name: Test model, codec, and durable store
-        run: cargo test --release
+        run: cargo test --release --locked
       - name: Run live seven-process integration gate with clean repeat
-        run: cargo run --release -- --bench-count 128 --evidence integration001-linux-evidence.json
-      - name: Print resolved lockfile for reproducibility review
+        run: cargo run --release --locked -- --bench-count 128 --evidence integration001-linux-evidence.json
+      - name: Print committed lockfile for reproducibility evidence
         run: cat Cargo.lock
       - name: Preserve evidence and lockfile
         uses: actions/upload-artifact@v4
@@ -58,15 +58,15 @@ jobs:
           rustc --version
           cargo --version
       - name: Test model, codec, and durable store
-        run: cargo test --release
+        run: cargo test --release --locked
       - name: Build native Windows live binary
-        run: cargo build --release
+        run: cargo build --release --locked
       - name: Run native Windows integration gate with clean repeat
-        run: cargo run --release -- --bench-count 128 --evidence integration001-windows-evidence.json
+        run: cargo run --release --locked -- --bench-count 128 --evidence integration001-windows-evidence.json
       - name: Type-check Windows ARM64
         run: |
           rustup target add aarch64-pc-windows-msvc
-          cargo check --release --target aarch64-pc-windows-msvc
+          cargo check --release --locked --target aarch64-pc-windows-msvc
       - name: Preserve evidence
         uses: actions/upload-artifact@v4
         with:
