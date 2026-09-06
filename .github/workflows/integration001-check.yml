@@ -1,0 +1,75 @@
+name: CALIBRE INTEGRATION-001 Check
+
+on:
+  push:
+    paths:
+      - 'integration001/**'
+      - '.github/workflows/integration001-check.yml'
+  pull_request:
+    paths:
+      - 'integration001/**'
+      - '.github/workflows/integration001-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CALIBRE_SOURCE_COMMIT: ${{ github.sha }}
+
+jobs:
+  linux-model-and-live-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: integration001
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: |
+          rustc --version
+          cargo --version
+      - name: Test model, codec, and durable store
+        run: cargo test --release --locked
+      - name: Run live seven-process integration gate with clean repeat
+        run: cargo run --release --locked -- --bench-count 128 --evidence integration001-linux-evidence.json
+      - name: Print committed lockfile for reproducibility evidence
+        run: cat Cargo.lock
+      - name: Preserve evidence and lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration001-linux-evidence
+          path: |
+            integration001/integration001-linux-evidence.json
+            integration001/Cargo.lock
+          if-no-files-found: error
+
+  windows-x64-live-and-arm64-build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: integration001
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust versions
+        run: |
+          rustc --version
+          cargo --version
+      - name: Test model, codec, and durable store
+        run: cargo test --release --locked
+      - name: Build native Windows live binary
+        run: cargo build --release --locked
+      - name: Run native Windows integration gate with clean repeat
+        run: cargo run --release --locked -- --bench-count 128 --evidence integration001-windows-evidence.json
+      - name: Type-check Windows ARM64
+        run: |
+          rustup target add aarch64-pc-windows-msvc
+          cargo check --release --locked --target aarch64-pc-windows-msvc
+      - name: Preserve evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration001-windows-evidence
+          path: integration001/integration001-windows-evidence.json
+          if-no-files-found: error
