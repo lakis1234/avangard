@@ -742,7 +742,9 @@ pub fn state_root(state: &State) -> Digest {
     put_u32(&mut bytes, state.applied.len() as u32);
     for (intent, receipt) in &state.applied {
         put_digest(&mut bytes, intent);
-        put_digest(&mut bytes, &receipt.certificate_digest);
+        // Certificate bytes and signer subsets are node-local audit evidence,
+        // not semantic monetary state. Distinct valid QCs for the same intent
+        // must therefore commit to the same state root.
         put_u32(&mut bytes, receipt.output_refs.len() as u32);
         for reference in &receipt.output_refs {
             put_u32(&mut bytes, reference.asset_id);
@@ -798,11 +800,17 @@ mod tests {
         (manifest, alice, input, tx, auth)
     }
 
-    fn final_qc(manifest: &CommitteeManifest, tx: &Tx) -> Qc {
+    fn finality_chain(
+        manifest: &CommitteeManifest,
+        tx: &Tx,
+        signers: &[usize],
+    ) -> (Qc, Qc) {
         let intent = intent_hash(tx).unwrap();
         let conflict = conflict_key(tx.input.reference);
         let round = 3;
-        let prevotes = (0..Q)
+        let prevotes = signers
+            .iter()
+            .copied()
             .map(|index| {
                 sign_vote(
                     manifest,
@@ -828,7 +836,9 @@ mod tests {
         )
         .unwrap();
         let justify = qc_digest(&prevote_qc, manifest).unwrap();
-        let precommits = (0..Q)
+        let precommits = signers
+            .iter()
+            .copied()
             .map(|index| {
                 sign_vote(
                     manifest,
@@ -843,7 +853,7 @@ mod tests {
                 .unwrap()
             })
             .collect();
-        assemble_qc(
+        let precommit_qc = assemble_qc(
             precommits,
             manifest,
             PHASE_PRECOMMIT,
@@ -852,7 +862,8 @@ mod tests {
             intent,
             Some(justify),
         )
-        .unwrap()
+        .unwrap();
+        (prevote_qc, precommit_qc)
     }
 
     #[test]
@@ -927,19 +938,39 @@ mod tests {
     #[test]
     fn finalized_apply_is_value_conserving_and_idempotent() {
         let (manifest, _alice, input, tx, auth) = fixture();
-        let qc = final_qc(&manifest, &tx);
+        let (prevote_qc, qc) = finality_chain(&manifest, &tx, &[0, 1, 2, 3, 4]);
         let mut state = State::from_cells(vec![input]).unwrap();
         let before = state.total_value().unwrap();
-        let intent = intent_hash(&tx).unwrap();
-        let conflict = conflict_key(tx.input.reference);
-        let round = qc.votes[0].round;
-        let prevotes = (0..Q).map(|index| sign_vote(&manifest, PHASE_PREVOTE, round, conflict, intent, [0; 32], index as u8, &lab_validator_key(OLD_EPOCH, index)).unwrap()).collect();
-        let prevote_qc = assemble_qc(prevotes, &manifest, PHASE_PREVOTE, round, conflict, intent, None).unwrap();
         assert!(matches!(state.apply_finalized(&tx, &auth, &prevote_qc, &qc, &manifest).unwrap(), ApplyOutcome::Applied(_)));
         assert_eq!(state.total_value().unwrap(), before);
         assert_eq!(state.live.values().filter(|cell| cell.owner == fee_collector() && cell.amount == 1).count(), 1);
         assert!(matches!(state.apply_finalized(&tx, &auth, &prevote_qc, &qc, &manifest).unwrap(), ApplyOutcome::AlreadyApplied(_)));
         assert_eq!(state.total_value().unwrap(), before);
+    }
+
+    #[test]
+    fn semantic_state_root_is_independent_of_valid_qc_signer_subset() {
+        let (manifest, _alice, input, tx, auth) = fixture();
+        let (prevote_a, precommit_a) =
+            finality_chain(&manifest, &tx, &[0, 1, 2, 3, 4]);
+        let (prevote_b, precommit_b) =
+            finality_chain(&manifest, &tx, &[2, 3, 4, 5, 6]);
+        assert_ne!(qc_digest(&precommit_a, &manifest).unwrap(), qc_digest(&precommit_b, &manifest).unwrap());
+
+        let mut state_a = State::from_cells(vec![input.clone()]).unwrap();
+        let mut state_b = State::from_cells(vec![input]).unwrap();
+        state_a
+            .apply_finalized(&tx, &auth, &prevote_a, &precommit_a, &manifest)
+            .unwrap();
+        state_b
+            .apply_finalized(&tx, &auth, &prevote_b, &precommit_b, &manifest)
+            .unwrap();
+
+        assert_eq!(state_a.live, state_b.live);
+        assert_eq!(state_a.spent_by, state_b.spent_by);
+        assert_eq!(state_a.known_ids, state_b.known_ids);
+        assert_ne!(state_a.applied, state_b.applied);
+        assert_eq!(state_a.root(), state_b.root());
     }
 
     #[test]

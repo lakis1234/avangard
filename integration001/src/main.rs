@@ -2,12 +2,13 @@ use calibre_integration001::config::{
     ControllerConfig, MAX_BENCH_COUNT, parse_controller_args,
 };
 use calibre_integration001::metrics::{RunMetrics, throughput, write_json};
+use calibre_integration001::node::REJECT_DURABLE_LOCK;
 use calibre_integration001::model::{
     ApplyOutcome, Cell, CommitteeManifest, Digest, Output, PHASE_PRECOMMIT, PHASE_PREVOTE, Q,
     Qc, State, Tx, UserAuth, Vote, assemble_qc, committee_hash, conflict_key, fee_collector,
-    intent_hash, lab_committee, lab_user_key, make_genesis_cell, make_proposal, make_transfer,
-    qc_digest, sign_user, verify_qc, verify_user_auth, verify_vote, N, NETWORK_ID, OLD_EPOCH,
-    PROTOCOL_VERSION,
+    intent_hash, lab_committee, lab_user_key, lab_validator_key, make_genesis_cell, make_proposal,
+    make_transfer, qc_digest, sign_user, sign_vote, verify_qc, verify_user_auth, verify_vote, N,
+    NETWORK_ID, OLD_EPOCH, PROTOCOL_VERSION,
 };
 use calibre_integration001::wire::{
     Request, Response, decode_response, encode_request, encode_state, read_frame, write_frame,
@@ -90,6 +91,7 @@ struct PhaseARunOutcome {
     split_bob_votes: usize,
     split_charlie_votes: usize,
     post_restart_conflict_votes: usize,
+    conflicting_precommit_rejections: usize,
     loser_live_outputs: usize,
     decision_vector: Vec<u64>,
 }
@@ -407,6 +409,93 @@ fn collect_votes(
         }
     }
     Ok(votes)
+}
+
+fn verify_observed_votes(
+    votes: &[Vote],
+    manifest: &CommitteeManifest,
+    phase: u8,
+    round: u64,
+    conflict: Digest,
+    intent: Digest,
+) -> Result<(), String> {
+    let mut signers = BTreeSet::new();
+    for vote in votes {
+        verify_vote(vote, manifest)?;
+        if vote.phase != phase
+            || vote.round != round
+            || vote.conflict_key != conflict
+            || vote.intent != intent
+        {
+            return Err("observed vote does not match the requested statement".into());
+        }
+        if !signers.insert(vote.signer_index) {
+            return Err("observed vote set contains a duplicate signer".into());
+        }
+    }
+    Ok(())
+}
+
+fn fixture_finality_chain(
+    manifest: &CommitteeManifest,
+    tx: &Tx,
+    round: u64,
+    signer_indices: &[usize],
+) -> Result<(Qc, Qc), String> {
+    let conflict = conflict_key(tx.input.reference);
+    let intent = intent_hash(tx)?;
+    let prevotes = signer_indices
+        .iter()
+        .copied()
+        .map(|index| {
+            sign_vote(
+                manifest,
+                PHASE_PREVOTE,
+                round,
+                conflict,
+                intent,
+                [0; 32],
+                index as u8,
+                &lab_validator_key(manifest.epoch, index),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let prevote_qc = assemble_qc(
+        prevotes,
+        manifest,
+        PHASE_PREVOTE,
+        round,
+        conflict,
+        intent,
+        None,
+    )?;
+    let prevote_digest = qc_digest(&prevote_qc, manifest)?;
+    let precommits = signer_indices
+        .iter()
+        .copied()
+        .map(|index| {
+            sign_vote(
+                manifest,
+                PHASE_PRECOMMIT,
+                round,
+                conflict,
+                intent,
+                prevote_digest,
+                index as u8,
+                &lab_validator_key(manifest.epoch, index),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let precommit_qc = assemble_qc(
+        precommits,
+        manifest,
+        PHASE_PRECOMMIT,
+        round,
+        conflict,
+        intent,
+        Some(prevote_digest),
+    )?;
+    Ok((prevote_qc, precommit_qc))
 }
 
 fn finalize_transfer(
@@ -1168,6 +1257,25 @@ fn run_phase_a_once(
             .map_err(|_| "Charlie conflict-delivery thread panicked".to_string())??;
         Ok((bob, charlie))
     })?;
+    let main_conflict = conflict_key(fixture.main_input.reference);
+    let bob_intent = intent_hash(&bob_tx)?;
+    let charlie_intent = intent_hash(&charlie_tx)?;
+    verify_observed_votes(
+        &split_bob,
+        &fixture.manifest,
+        PHASE_PREVOTE,
+        1,
+        main_conflict,
+        bob_intent,
+    )?;
+    verify_observed_votes(
+        &split_charlie,
+        &fixture.manifest,
+        PHASE_PREVOTE,
+        1,
+        main_conflict,
+        charlie_intent,
+    )?;
     if split_bob.len() != 3 || split_charlie.len() != 2 {
         return Err(format!(
             "tentative honest split was {}/{} instead of 3/2",
@@ -1191,6 +1299,98 @@ fn run_phase_a_once(
     }
     println!("ROUND 2 HEALTHY HONEST QUORUM: BOB GETS 5/7 PRECOMMIT QC -> PASS");
 
+    let (alternate_prevote_qc, alternate_precommit_qc) = fixture_finality_chain(
+        &fixture.manifest,
+        &bob_tx,
+        2,
+        &[0, 1, 2, 3, 4],
+    )?;
+    if qc_digest(&alternate_precommit_qc, &fixture.manifest)?
+        == qc_digest(&bob_finalized.qc, &fixture.manifest)?
+    {
+        return Err("different signer subsets unexpectedly produced one QC digest".into());
+    }
+    let mut original_qc_state = fixture.genesis.clone();
+    let mut alternate_qc_state = fixture.genesis.clone();
+    original_qc_state.apply_finalized(
+        &bob_tx,
+        &bob_auth,
+        &bob_finalized.prevote_qc,
+        &bob_finalized.qc,
+        &fixture.manifest,
+    )?;
+    alternate_qc_state.apply_finalized(
+        &bob_tx,
+        &bob_auth,
+        &alternate_prevote_qc,
+        &alternate_precommit_qc,
+        &fixture.manifest,
+    )?;
+    if original_qc_state.root() != alternate_qc_state.root()
+        || original_qc_state.live != alternate_qc_state.live
+        || original_qc_state.spent_by != alternate_qc_state.spent_by
+    {
+        return Err("same intent with different valid QC subsets diverged semantic state".into());
+    }
+    println!("SAME BOB INTENT / TWO DIFFERENT VALID 5-OF-7 QC SUBSETS: SEMANTIC STATE ROOT MATCHES -> PASS");
+
+    // Build a cryptographically valid opposing PREVOTE QC with laboratory
+    // fixture keys, then send it to the two honest nodes that really recorded
+    // Charlie PREVOTEs in round 1. Both have since durably PRECOMMIT-locked Bob
+    // in round 2, so the old opposing PRECOMMIT must be rejected specifically
+    // at the durable-lock boundary.
+    let charlie_round_one_attack = make_proposal(
+        &fixture.manifest,
+        1,
+        charlie_tx.clone(),
+        charlie_auth,
+        None,
+    )?;
+    let synthetic_charlie_prevotes = (0..Q)
+        .map(|index| {
+            sign_vote(
+                &fixture.manifest,
+                PHASE_PREVOTE,
+                1,
+                main_conflict,
+                charlie_intent,
+                [0; 32],
+                index as u8,
+                &lab_validator_key(OLD_EPOCH, index),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let synthetic_charlie_prevote_qc = assemble_qc(
+        synthetic_charlie_prevotes,
+        &fixture.manifest,
+        PHASE_PREVOTE,
+        1,
+        main_conflict,
+        charlie_intent,
+        None,
+    )?;
+    let conflicting_precommit = Request::Precommit {
+        proposal: charlie_round_one_attack,
+        prevote_qc: synthetic_charlie_prevote_qc,
+    };
+    let mut conflicting_precommit_rejections = 0usize;
+    for index in [5usize, 6] {
+        match rpc(ports[index], &conflicting_precommit, &metrics)? {
+            Response::Rejected { code } if code == REJECT_DURABLE_LOCK => {
+                conflicting_precommit_rejections += 1;
+            }
+            other => {
+                return Err(format!(
+                    "honest validator {index} did not reject opposing PRECOMMIT at durable-lock boundary: {other:?}"
+                ));
+            }
+        }
+    }
+    if conflicting_precommit_rejections != 2 {
+        return Err("opposing PRECOMMIT durable-lock rejection count was not 2/2".into());
+    }
+    println!("OPPOSING VALID ROUND-1 PREVOTE QC AFTER BOB LOCK: HONEST NODES 5,6 REJECT CHARLIE PRECOMMIT AT DURABLE LOCK 2/2 -> PASS");
+
     ports[2] = cluster.restart(2)?;
     let charlie_round_three = make_proposal(
         &fixture.manifest,
@@ -1204,6 +1404,14 @@ fn run_phase_a_once(
         &(0..N).collect::<Vec<_>>(),
         &Request::Prevote(charlie_round_three),
         &metrics,
+    )?;
+    verify_observed_votes(
+        &charlie_after_lock,
+        &fixture.manifest,
+        PHASE_PREVOTE,
+        3,
+        main_conflict,
+        charlie_intent,
     )?;
     if charlie_after_lock.len() != 2
         || charlie_after_lock.iter().any(|vote| vote.signer_index >= 2)
@@ -1333,6 +1541,7 @@ fn run_phase_a_once(
         split_bob_votes: split_bob.len(),
         split_charlie_votes: split_charlie.len(),
         post_restart_conflict_votes: charlie_after_lock.len(),
+        conflicting_precommit_rejections,
         loser_live_outputs: forward_state
             .live
             .values()
@@ -1344,6 +1553,7 @@ fn run_phase_a_once(
             split_bob.len() as u64,
             split_charlie.len() as u64,
             bob_finalized.qc.votes.len() as u64,
+            conflicting_precommit_rejections as u64,
             charlie_after_lock.len() as u64,
             mutation_count as u64,
             qc_negative_count as u64,
@@ -1400,6 +1610,8 @@ fn run_controller(config: ControllerConfig) -> Result<(), String> {
         || second.genesis_total != second.final_total
         || first.loser_live_outputs != 0
         || second.loser_live_outputs != 0
+        || first.conflicting_precommit_rejections != 2
+        || second.conflicting_precommit_rejections != 2
     {
         return Err("B30-A run-count, conservation, or loser-output evidence is inconsistent".into());
     }
@@ -1480,6 +1692,7 @@ fn run_controller(config: ControllerConfig) -> Result<(), String> {
             ("measured_fields", MEASURED_FIELDS),
             ("not_measured_fields", NOT_MEASURED_FIELDS),
             ("healthy_finality_signers", "HONEST_INDICES_2_3_4_5_6_NO_BYZANTINE_COOPERATION"),
+            ("b10_opposing_prevote_qc", "VALID_LAB_FIXTURE_INJECTION_TO_TEST_DURABLE_LOCK"),
             ("restart_fault_observed", "HONEST_NODE_2_KILLED_RESTARTED_NEW_PORT_LOCK_RECOVERED"),
             ("cleanup", "TWO_TEST_OWNED_ROOTS_REMOVED_ALL_CHILDREN_REAPED"),
         ];
@@ -1517,9 +1730,11 @@ fn run_controller(config: ControllerConfig) -> Result<(), String> {
             ("duplicate_live_validator_apply_checks_per_run", 7.0),
             ("unauthorized_finality_proof_chains", 0.0),
             ("dual_conflicting_finality_proof_chains", 0.0),
+            ("different_valid_qc_subset_state_root_matches", 1.0),
             ("loser_live_outputs", second.loser_live_outputs as f64),
             ("live_conflict_bob_round1_prevotes", second.split_bob_votes as f64),
             ("live_conflict_charlie_round1_prevotes", second.split_charlie_votes as f64),
+            ("opposing_precommit_durable_lock_rejections", second.conflicting_precommit_rejections as f64),
             ("post_restart_charlie_prevotes", second.post_restart_conflict_votes as f64),
             ("max_snapshot_bytes", first.max_snapshot_bytes.max(second.max_snapshot_bytes) as f64),
             ("max_wal_bytes", first.max_wal_bytes.max(second.max_wal_bytes) as f64),
@@ -1550,7 +1765,7 @@ fn run_controller(config: ControllerConfig) -> Result<(), String> {
     println!("ROOTS GENESIS={} FINAL={} COMMITTEE={}", hex_prefix(&second.genesis_root, 32), hex_prefix(&second.final_root, 32), committee_hash_text);
     println!("COUNTS PHASE_A_GATES_PASSED={passed_gate_count}/{} FINALITY_CHAINS_PER_RUN={finality_proof_chains_per_run} PREVOTE_QCS_PER_RUN={finality_proof_chains_per_run} PRECOMMIT_QCS_PER_RUN={finality_proof_chains_per_run} UNAUTHORIZED_FINALITY=0 DUAL_CONFLICT_FINALITY=0", PHASE_A_GATES.len());
     println!("NEGATIVES_PER_RUN OWNER_CASES=3 OWNER_HONEST_REJECTIONS={} SIGNED_FIELD_MUTATIONS={} CONSERVATION_CASES=4 QUORUM_CASES={}", second.invalid_owner_rejections, second.mutation_count, second.qc_negative_count);
-    println!("CONFLICT_OBSERVED_PER_RUN ROUND1_BOB_PREVOTES={} ROUND1_CHARLIE_PREVOTES={} POST_RESTART_CHARLIE_PREVOTES={} LOSER_LIVE_OUTPUTS={}", second.split_bob_votes, second.split_charlie_votes, second.post_restart_conflict_votes, second.loser_live_outputs);
+    println!("CONFLICT_OBSERVED_PER_RUN ROUND1_BOB_PREVOTES={} ROUND1_CHARLIE_PREVOTES={} OPPOSING_PRECOMMIT_DURABLE_LOCK_REJECTIONS={} POST_RESTART_CHARLIE_PREVOTES={} LOSER_LIVE_OUTPUTS={}", second.split_bob_votes, second.split_charlie_votes, second.conflicting_precommit_rejections, second.post_restart_conflict_votes, second.loser_live_outputs);
     println!("CONSERVATION GENESIS_TOTAL={} FINAL_TOTAL={} RESULT=PASS", second.genesis_total, second.final_total);
     println!("PERSISTENCE MAX_SNAPSHOT_BYTES={} MAX_WAL_BYTES={}", first.max_snapshot_bytes.max(second.max_snapshot_bytes), first.max_wal_bytes.max(second.max_wal_bytes));
     println!("ELAPSED_TOTAL_MS={} INVOCATION={invocation}", elapsed.as_millis());
